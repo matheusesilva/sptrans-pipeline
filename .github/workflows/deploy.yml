@@ -4,11 +4,6 @@ on:
   push:
     branches: [ "main" ]
 
-env:
-  AWS_REGION: us-east-1
-  ECR_REPOSITORY: sptrans-pipeline
-  LAMBDA_FUNCTION_NAME: sptrans-extractor
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -22,7 +17,7 @@ jobs:
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
+        aws-region: ${{ vars.AWS_REGION }}
 
     - name: Login to Amazon ECR
       id: login-ecr
@@ -32,9 +27,10 @@ jobs:
       id: build-image
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
         IMAGE_TAG: latest
       run: |
-        # Build da imagem (garantindo plataforma amd64 para o Lambda)
+        # Build focado na arquitetura do Lambda (AMD64)
         docker build --platform linux/amd64 -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
         echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
@@ -42,5 +38,5 @@ jobs:
     - name: Update Lambda Function
       run: |
         aws lambda update-function-code \
-          --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+          --function-name ${{ vars.LAMBDA_FUNCTION_NAME }} \
           --image-uri ${{ steps.build-image.outputs.image }}
