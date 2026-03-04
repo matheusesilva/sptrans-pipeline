@@ -3,6 +3,10 @@ name: Deploy to Amazon ECR
 on:
   push:
     branches: [ "main" ]
+    paths:
+      -'src/**'
+      -'Dockerfile'
+      -'requirements.txt'
 
 jobs:
   deploy:
