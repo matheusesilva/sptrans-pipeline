@@ -50,7 +50,7 @@ resource "aws_lambda_function" "sptrans_pipeline" {
 
   environment {
     variables = {
-      SPTRANS_TOKEN = "var.sptrans_token"
+      SPTRANS_TOKEN = var.sptrans_token
       BUCKET_NAME   = aws_s3_bucket.data_lake.bucket
     }
   }

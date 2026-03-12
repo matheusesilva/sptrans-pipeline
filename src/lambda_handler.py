@@ -27,7 +27,8 @@ def handler(event, context):
         raise Exception(f"Falha na auth: {resp.status_code} - {resp.text}")
 
     dados = session.get(
-        "http://api.olhovivo.sptrans.com.br/v2.1/Posicao"
+        "http://api.olhovivo.sptrans.com.br/v2.1/Posicao"   
+        
     ).json()
     
     # --- NOVO: SALVAR NA BRONZE (JSON BRUTO) ---
