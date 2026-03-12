@@ -17,9 +17,9 @@ def handler(event, context):
         "Content-Length": "0"
     }
 
-    auth_url = f"https://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={token}"
+    auth_url = f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={token}"
 
-    resp = session.post(auth_url, headers=headers)
+    resp = session.post(auth_url, headers=headers, data="")
 
     print(resp.status_code, resp.text)
 
@@ -27,7 +27,7 @@ def handler(event, context):
         raise Exception(f"Falha na auth: {resp.status_code} - {resp.text}")
 
     dados = session.get(
-        "https://api.olhovivo.sptrans.com.br/v2.1/Posicao"
+        "http://api.olhovivo.sptrans.com.br/v2.1/Posicao"
     ).json()
     
     # --- NOVO: SALVAR NA BRONZE (JSON BRUTO) ---
