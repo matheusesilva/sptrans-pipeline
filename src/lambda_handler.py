@@ -10,14 +10,25 @@ def handler(event, context):
     token = os.environ['SPTRANS_TOKEN']
     bucket = os.environ['BUCKET_NAME']
     
-    # 1. Autenticação
     session = requests.Session()
-    auth_url = f"http://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={token}"
-    if session.post(auth_url).text != 'true':
-        return {"status": "erro", "msg": "Falha na auth"}
 
-    # 2. Extração dos dados brutos
-    dados = session.get("http://api.olhovivo.sptrans.com.br/v2.1/Posicao").json()
+    headers = {
+        "User-Agent": "curl/7.81.0",
+        "Content-Length": "0"
+    }
+
+    auth_url = f"https://api.olhovivo.sptrans.com.br/v2.1/Login/Autenticar?token={token}"
+
+    resp = session.post(auth_url, headers=headers)
+
+    print(resp.status_code, resp.text)
+
+    if resp.status_code != 200 or resp.text.strip() != "true":
+        raise Exception(f"Falha na auth: {resp.status_code} - {resp.text}")
+
+    dados = session.get(
+        "https://api.olhovivo.sptrans.com.br/v2.1/Posicao"
+    ).json()
     
     # --- NOVO: SALVAR NA BRONZE (JSON BRUTO) ---
     s3_client = boto3.client('s3')
