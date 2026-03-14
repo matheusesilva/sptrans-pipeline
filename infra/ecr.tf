@@ -1,7 +1,5 @@
-# infra/ecr.tf
-
-resource "aws_ecr_repository" "pipeline_repo" {
-  name                 = "sptrans-pipeline"
+resource "aws_ecr_repository" "transformer" {
+  name                 = "sptrans-transformer"
   image_tag_mutability = "MUTABLE"
 
   image_scanning_configuration {
@@ -9,26 +7,19 @@ resource "aws_ecr_repository" "pipeline_repo" {
   }
 }
 
-# Política para manter apenas as últimas 5 imagens
-resource "aws_ecr_lifecycle_policy" "repo_policy" {
-  repository = aws_ecr_repository.pipeline_repo.name
+resource "aws_ecr_lifecycle_policy" "transformer" {
+  repository = aws_ecr_repository.transformer.name
 
-  policy = <<EOF
-{
-    "rules": [
-        {
-            "rulePriority": 1,
-            "description": "Manter apenas as últimas 3 imagens",
-            "selection": {
-                "tagStatus": "any",
-                "countType": "imageCountMoreThan",
-                "countNumber": 3
-            },
-            "action": {
-                "type": "expire"
-            }
-        }
-    ]
-}
-EOF
+  policy = jsonencode({
+    rules = [{
+      rulePriority = 1
+      description  = "Manter apenas as últimas 3 imagens"
+      selection = {
+        tagStatus   = "any"
+        countType   = "imageCountMoreThan"
+        countNumber = 3
+      }
+      action = { type = "expire" }
+    }]
+  })
 }

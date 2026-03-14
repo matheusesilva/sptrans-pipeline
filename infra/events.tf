@@ -1,22 +1,15 @@
-# 1. Define a regra de tempo (O Cron)
-resource "aws_cloudwatch_event_rule" "sptrans_every_5_minutes" {
-  name                = "sptrans-extract-every-5-minutes"
-  description         = "Dispara o Lambda da SPTrans a cada 5 minutos"
+resource "aws_cloudwatch_event_rule" "every_5_minutes" {
+  name                = "sptrans-pipeline-every-5-minutes"
+  description         = "Inicia o pipeline SPTrans a cada 5 minutos via Step Functions"
   schedule_expression = "rate(5 minutes)"
+  state               = "ENABLED"
 }
 
-# 2. Conecta a regra ao Lambda
-resource "aws_cloudwatch_event_target" "target_lambda" {
-  rule      = aws_cloudwatch_event_rule.sptrans_every_5_minutes.name
-  target_id = "SptransExtractor"
-  arn       = aws_lambda_function.sptrans_pipeline.arn
-}
+resource "aws_cloudwatch_event_target" "step_functions" {
+  rule      = aws_cloudwatch_event_rule.every_5_minutes.name
+  target_id = "SptransPipeline"
+  arn       = aws_sfn_state_machine.pipeline.arn
+  role_arn  = aws_iam_role.events_role.arn
 
-# 3. Dá permissão para o EventBridge invocar o Lambda
-resource "aws_lambda_permission" "allow_cloudwatch" {
-  statement_id  = "AllowExecutionFromCloudWatch"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.sptrans_pipeline.function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.sptrans_every_5_minutes.arn
+  input = jsonencode({})
 }

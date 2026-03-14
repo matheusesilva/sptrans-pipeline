@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SPTrans – Mapa de Calor de Ônibus</title>
+
+  <!-- Material Icons -->
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet" />
+
+  <!-- MapLibre GL -->
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.css" />
+  <script src="https://unpkg.com/maplibre-gl@4.5.0/dist/maplibre-gl.js"></script>
+
+  <!-- deck.gl standalone (inclui @deck.gl/core + layers) -->
+  <script src="https://unpkg.com/deck.gl@9.0.0/dist.min.js"></script>
+
+  <!-- DuckDB WASM via ESM shim -->
+  <script type="importmap">
+  {
+    "imports": {
+      "@duckdb/duckdb-wasm": "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm"
+    }
+  }
+  </script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Roboto', 'Inter', system-ui, sans-serif;
+      background: #0d1117;
+      color: #e6edf3;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .material-icons {
+      font-size: 18px;
+      vertical-align: middle;
+      color: #8b949e;
+    }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 20px;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      flex-shrink: 0;
+      z-index: 10;
+    }
+    header h1 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #58a6ff;
+      letter-spacing: 0.5px;
+    }
+    header .badge {
+      font-size: 0.7rem;
+      background: #1f6feb33;
+      color: #58a6ff;
+      border: 1px solid #1f6feb66;
+      padding: 2px 8px;
+      border-radius: 20px;
+    }
+    #status {
+      margin-left: auto;
+      font-size: 0.75rem;
+      color: #8b949e;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    #status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #3fb950;
+      transition: background 0.3s;
+    }
+    #status-dot.loading { background: #d29922; animation: pulse 1s infinite; }
+    #status-dot.error   { background: #f85149; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+    /* ── Controls bar ── */
+    #controls {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      padding: 12px 20px;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+
+    /* ── Material outlined text field (date) ── */
+    .mdc-field {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }
+    .mdc-field .field-icon {
+      position: absolute;
+      left: 10px;
+      color: #8b949e;
+      font-size: 18px;
+      pointer-events: none;
+      z-index: 1;
+    }
+    .mdc-field input[type="date"] {
+      background: #21262d;
+      border: 1px solid #30363d;
+      color: #e6edf3;
+      padding: 8px 10px 8px 34px;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      cursor: pointer;
+      outline: none;
+      transition: border-color 0.2s;
+      width: 180px;
+    }
+    .mdc-field input[type="date"]:focus { border-color: #58a6ff; }
+    .mdc-field input[type="date"]::-webkit-calendar-picker-indicator {
+      filter: invert(0.6);
+      cursor: pointer;
+    }
+    .mdc-field .field-label {
+      position: absolute;
+      top: -9px;
+      left: 8px;
+      background: #161b22;
+      padding: 0 4px;
+      font-size: 0.68rem;
+      color: #8b949e;
+      pointer-events: none;
+      letter-spacing: 0.3px;
+    }
+
+    /* ── Material slider with always-visible bubble ── */
+    .mdc-slider-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 280px;
+    }
+    .mdc-slider-top {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .mdc-slider-top .field-label-inline {
+      font-size: 0.68rem;
+      color: #8b949e;
+      letter-spacing: 0.3px;
+      white-space: nowrap;
+    }
+    .slider-track-wrap {
+      position: relative;
+      padding-top: 28px; /* room for bubble above */
+    }
+    #time-slider {
+      width: 100%;
+      appearance: none;
+      -webkit-appearance: none;
+      height: 4px;
+      border-radius: 2px;
+      background: #30363d;
+      outline: none;
+      cursor: pointer;
+      display: block;
+    }
+    #time-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: #58a6ff;
+      border: 2px solid #161b22;
+      cursor: pointer;
+      box-shadow: 0 0 0 3px #58a6ff33;
+      transition: box-shadow 0.15s;
+    }
+    #time-slider::-moz-range-thumb {
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: #58a6ff;
+      border: 2px solid #161b22;
+      cursor: pointer;
+    }
+    #time-slider:active::-webkit-slider-thumb {
+      box-shadow: 0 0 0 6px #58a6ff33;
+    }
+    /* Filled track (left of thumb) via JS-set CSS variable */
+    #time-slider {
+      background: linear-gradient(to right,
+        #58a6ff var(--pct, 50%),
+        #30363d var(--pct, 50%)
+      );
+    }
+    /* Bubble label above the thumb */
+    #time-bubble {
+      position: absolute;
+      top: -10%;
+      transform: translateX(-50%);
+      background: #58a6ff;
+      color: #0d1117;
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 10px;
+      white-space: nowrap;
+      pointer-events: none;
+      letter-spacing: 0.5px;
+      left: var(--pct, 50%);
+    }
+    #time-bubble::after {
+      content: '';
+      position: absolute;
+      bottom: -4px;
+      left: 50%;
+      transform: translateX(-50%);
+      border: 4px solid transparent;
+      border-top-color: #58a6ff;
+      border-bottom: none;
+    }
+
+    /* ── Count badge ── */
+    #count-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      background: #21262d;
+      border: 1px solid #30363d;
+      padding: 6px 12px;
+      border-radius: 4px;
+      color: #8b949e;
+    }
+    #count-badge span { color: #3fb950; font-weight: 600; }
+
+    /* ── Live button ── */
+    #live-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 4px;
+      border: 1px solid #30363d;
+      background: #21262d;
+      color: #8b949e;
+      font-size: 0.82rem;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all 0.2s;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+    }
+    #live-btn .material-icons { font-size: 16px; color: inherit; }
+    #live-btn.live-active {
+      background: #3fb95022;
+      border-color: #3fb95066;
+      color: #3fb950;
+      animation: live-pulse 2s ease-in-out infinite;
+    }
+    @keyframes live-pulse {
+      0%,100% { box-shadow: 0 0 0 0 #3fb95033; }
+      50%      { box-shadow: 0 0 0 4px #3fb95011; }
+    }
+
+    /* ── Map ── */
+    #map-container {
+      flex: 1;
+      position: relative;
+      min-height: 0;
+    }
+    #map {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* ── Legend ── */
+    #legend {
+      position: absolute;
+      bottom: 28px;
+      right: 16px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 0.75rem;
+    }
+    #legend h4 { color: #8b949e; margin-bottom: 8px; font-weight: 500; }
+    .legend-bar {
+      width: 160px; height: 10px;
+      border-radius: 4px;
+      background: linear-gradient(to right, #0d1117, #1f4e8c, #58a6ff, #f85149, #ffa657);
+      margin-bottom: 4px;
+    }
+    .legend-labels {
+      display: flex;
+      justify-content: space-between;
+      color: #6e7681;
+    }
+
+    /* ── No-data overlay ── */
+    #no-data {
+      display: none;
+      position: absolute;
+      inset: 0;
+      background: #0d111799;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 8px;
+      font-size: 0.9rem;
+      color: #8b949e;
+    }
+    #no-data.visible { display: flex; }
+  </style>
+</head>
+<body>
+
+<header>
+  <span class="material-icons" style="color:#58a6ff;font-size:22px;">directions_bus</span>
+  <h1>SPTrans Frota em Tempo Real</h1>
+  <span class="badge">DuckDB WASM + deck.gl</span>
+  <div id="status">
+    <div id="status-dot"></div>
+    <span id="status-text">Inicializando…</span>
+  </div>
+</header>
+
+<div id="controls">
+
+  <!-- Date picker -->
+  <div class="mdc-field">
+    <span class="material-icons field-icon">calendar_today</span>
+    <span class="field-label">Data</span>
+    <input type="date" id="date-picker" />
+  </div>
+
+  <!-- Time slider -->
+  <div class="mdc-slider-wrap">
+    <div class="mdc-slider-top">
+      <span class="material-icons" style="font-size:17px;">schedule</span>
+      <span class="field-label-inline">Horário</span>
+    </div>
+    <div class="slider-track-wrap">
+      <div id="time-bubble">12:00</div>
+      <input type="range" id="time-slider" min="0" max="287" step="1" value="144" />
+    </div>
+  </div>
+
+  <!-- Bus count -->
+  <div id="count-badge">
+    <span class="material-icons" style="font-size:16px;color:#3fb950;">directions_bus</span>
+    Ônibus: <span id="hex-count">–</span>
+  </div>
+
+  <!-- Live button -->
+  <button id="live-btn" class="live-active">
+    <span class="material-icons" id="live-icon">stop</span>
+    Ao Vivo
+  </button>
+
+</div>
+
+<div id="map-container">
+  <div id="map"></div>
+  <div id="no-data">
+    <span class="material-icons" style="font-size:36px;">inbox</span>
+    <span>Nenhum dado disponível para este horário.</span>
+  </div>
+</div>
+
+<div id="legend">
+  <h4>Frota SPTrans</h4>
+  <div class="legend-bar"></div>
+  <div class="legend-labels"><span>Baixa densidade</span><span>Alta</span></div>
+  <div style="margin-top:10px; display:flex; align-items:center; gap:8px; font-size:0.72rem; color:#6e7681;">
+    <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#58dcaa;border:1px solid rgba(255,255,255,0.3)"></span>
+    Posição individual
+  </div>
+</div>
+
+<script type="module">
+import * as duckdb from "@duckdb/duckdb-wasm";
+
+// Module scripts are deferred by spec — DOM is already ready here.
+(async () => {
+  // ─────────────────────────────────────────────────────────────────
+  //  Configuração — injeta a URL do bucket no deploy (ver deploy.sh)
+  // ─────────────────────────────────────────────────────────────────
+  const BUCKET_BASE_URL = "%%STATIC_BUCKET_URL%%"; // substituído pelo deploy.sh
+
+  // ─── Helpers ────────────────────────────────────────────────────
+  const sliderToTime = (v) => {
+    const h = Math.floor(v / 12).toString().padStart(2, "0");
+    const m = ((v % 12) * 5).toString().padStart(2, "0");
+    return `${h}:${m}`;
+  };
+
+  const timeToHHMM = (t) => t.replace(":", ""); // "12:00" → "1200"
+
+  // ── Timezone helpers ─────────────────────────────────────────────
+  // Slider positions are in BRT (America/Sao_Paulo, UTC-3).
+  // Parquet files on the bucket are named in UTC-0.
+  // BRT_OFFSET_SLOTS = 3h × 12 slots/h = 36 slots behind UTC.
+  const BRT_OFFSET_SLOTS = 3 * 12; // 36
+
+  // Given a BRT slider value, return { date, hhmm } for the UTC file to fetch.
+  // Handles midnight rollover (e.g. BRT 01:00 = UTC 04:00 same day,
+  // but BRT 00:10 wraps back to UTC 03:10 of the *same* calendar day since
+  // the files are partitioned by UTC date).
+  const brtSlotToUtc = (brtSlot, brtDate) => {
+    const utcSlot = brtSlot + BRT_OFFSET_SLOTS;
+    if (utcSlot < 288) {
+      // Same UTC date as BRT date
+      const h = Math.floor(utcSlot / 12).toString().padStart(2, "0");
+      const m = ((utcSlot % 12) * 5).toString().padStart(2, "0");
+      return { date: brtDate, hhmm: `${h}${m}` };
+    } else {
+      // Overflows into next UTC day
+      const slot = utcSlot - 288;
+      const h = Math.floor(slot / 12).toString().padStart(2, "0");
+      const m = ((slot % 12) * 5).toString().padStart(2, "0");
+      // Advance brtDate by 1 day
+      const [y, mo, d] = brtDate.split("-").map(Number);
+      const next = new Date(Date.UTC(y, mo - 1, d + 1));
+      const nextDate = next.toISOString().slice(0, 10);
+      return { date: nextDate, hhmm: `${h}${m}` };
+    }
+  };
+
+  // Convert a UTC hhmm string from the manifest into a BRT slider value.
+  // Also returns the BRT date in case it rolled back a day.
+  const utcHhmmToBrtSlot = (hhmm, utcDate) => {
+    const h = parseInt(hhmm.slice(0, 2), 10);
+    const m = parseInt(hhmm.slice(2, 4), 10);
+    const utcSlot = h * 12 + Math.floor(m / 5);
+    const brtSlot = utcSlot - BRT_OFFSET_SLOTS;
+    if (brtSlot >= 0) {
+      return { brtSlot, brtDate: utcDate };
+    } else {
+      // Rolls back to previous calendar day in BRT
+      const slot = brtSlot + 288;
+      const [y, mo, d] = utcDate.split("-").map(Number);
+      const prev = new Date(Date.UTC(y, mo - 1, d - 1));
+      return { brtSlot: slot, brtDate: prev.toISOString().slice(0, 10) };
+    }
+  };
+
+  // Always use Brazil time (America/Sao_Paulo) — uses Intl parts for cross-browser reliability
+  const nowBRT = () => {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Sao_Paulo",
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+    }).formatToParts(new Date());
+    const get = (t) => parts.find(p => p.type === t)?.value ?? "0";
+    return {
+      year:   parseInt(get("year")),
+      month:  parseInt(get("month")),
+      day:    parseInt(get("day")),
+      hour:   parseInt(get("hour")),
+      minute: parseInt(get("minute")),
+    };
+  };
+  const todayISO = () => {
+    const d = nowBRT();
+    return `${d.year}-${String(d.month).padStart(2,"0")}-${String(d.day).padStart(2,"0")}`;
+  };
+
+  const setStatus = (state, msg) => {
+    document.getElementById("status-dot").className = state;
+    document.getElementById("status-text").textContent = msg;
+  };
+
+  // ─── DuckDB WASM ────────────────────────────────────────────────
+  let db, conn;
+
+  async function initDuckDB() {
+    const JSDELIVR = `https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/dist/`;
+    const bundles = {
+      mvp: {
+        mainModule:  JSDELIVR + "duckdb-mvp.wasm",
+        mainWorker:  JSDELIVR + "duckdb-browser-mvp.worker.js",
+      },
+      eh: {
+        mainModule:  JSDELIVR + "duckdb-eh.wasm",
+        mainWorker:  JSDELIVR + "duckdb-browser-eh.worker.js",
+      },
+    };
+    const bundle = await duckdb.selectBundle(bundles);
+    // Workers must be same-origin. Wrap the CDN URL in a blob so the
+    // browser treats it as same-origin while still loading the real script.
+    const workerBlob = new Blob(
+      [`importScripts("${bundle.mainWorker}");`],
+      { type: "text/javascript" }
+    );
+    const workerUrl = URL.createObjectURL(workerBlob);
+    const worker = new Worker(workerUrl);
+    const logger = new duckdb.ConsoleLogger();
+    db = new duckdb.AsyncDuckDB(logger, worker);
+    await db.instantiate(bundle.mainModule);
+    conn = await db.connect();
+    // Instala extensão httpfs para ler arquivos remotos
+    await conn.query("INSTALL httpfs; LOAD httpfs;");
+    await conn.query("SET http_keep_alive=false;");
+  }
+
+  // ─── Map (MapLibre GL) ──────────────────────────────────────────
+  const map = new maplibregl.Map({
+    container: "map",
+    style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+    center: [-46.633, -23.55],   // São Paulo
+    zoom: 11,
+    maxZoom: 18,
+  });
+
+  // ─── deck.gl via MapboxOverlay (proper MapLibre integration) ────
+  // MapboxOverlay attaches to MapLibre's WebGL context directly —
+  // no separate canvas, no manual camera sync needed.
+  const { MapboxOverlay, HeatmapLayer, ScatterplotLayer } = globalThis.deck;
+  const overlay = new MapboxOverlay({ layers: [] });
+  map.addControl(overlay);
+
+  // ─── Live-update state ──────────────────────────────────────────
+  let liveMode = true;
+  let refreshTimer = null;
+  const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 min
+
+  const dateToSliderValue = () => {
+    const d = nowBRT();
+    return Math.floor((d.hour * 60 + d.minute) / 5);
+  };
+
+  async function fetchManifest(date) {
+    const url = `${BUCKET_BASE_URL}/data/gold/${date}/manifest.json`;
+    try {
+      const resp = await fetch(url, { cache: "no-store" });
+      if (!resp.ok) return null;
+      return await resp.json();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function findLatestSlot(utcDate) {
+    const manifest = await fetchManifest(utcDate);
+    if (!manifest || !manifest.snapshots?.length) return null;
+    const latestHhmm = manifest.snapshots[manifest.snapshots.length - 1];
+    // Manifest hhmm is UTC — convert to BRT for the slider display
+    const { brtSlot, brtDate } = utcHhmmToBrtSlot(latestHhmm, utcDate);
+    return { brtSlot, brtDate };
+  }
+
+  // ─── Zoom-aware layer sizing ─────────────────────────────────────
+  // Returns sizes scaled to current map zoom so the visual proportions
+  // stay consistent whether you're zoomed out to city level or into a street.
+  function getZoomSizes(resCol) {
+    const zoom = map.getZoom(); // e.g. 10–16
+
+    // Heatmap radiusPixels: larger at low zoom (city overview), smaller zoomed in
+    // so it doesn't swamp the whole viewport
+    const heatBase  = { h3_r6: 55, h3_r7: 38, h3_r8: 22, h3_r9: 13 }[resCol] ?? 55;
+    // Scale inversely with zoom beyond z11 — shrink as you zoom in
+    const zoomDelta = Math.max(0, zoom - 11);
+    const heatRadius = Math.max(8, heatBase - zoomDelta * 3.5);
+
+    // Scatterplot dot: use radiusMinPixels/radiusMaxPixels to stay screen-stable.
+    // At low zoom they're tiny pixels; zoomed in they map to real meters on screen.
+    // We want them to feel proportionally small at every zoom.
+    const dotMinPx = Math.max(1, Math.round(2   - (zoom - 11) * 0.15));
+    const dotMaxPx = Math.max(3, Math.round(5   - (zoom - 11) * 0.4));
+    const dotMeters = { h3_r6: 80, h3_r7: 55, h3_r8: 35, h3_r9: 20 }[resCol] ?? 80;
+
+    return { heatRadius, dotMinPx, dotMaxPx, dotMeters };
+  }
+
+  // ─── Query & render ─────────────────────────────────────────────
+  // Keep last loaded data so we can re-render on zoom without re-fetching
+  let lastHeatRows = [];
+  let lastBusRows  = [];
+
+  function renderLayers(resCol) {
+    if (!lastHeatRows.length && !lastBusRows.length) return;
+    const { heatRadius, dotMinPx, dotMaxPx, dotMeters } = getZoomSizes(resCol);
+
+    overlay.setProps({
+      layers: [
+        new HeatmapLayer({
+          id: "heatmap",
+          data: lastHeatRows,
+          getPosition: (d) => d.position,
+          getWeight:   (d) => d.weight,
+          radiusPixels: heatRadius,
+          intensity: 4,
+          threshold: 0.01,
+          colorRange: [
+            [13,  17,  23,   0],
+            [15,  50, 110, 100],
+            [40, 120, 220, 170],
+            [88, 166, 255, 210],
+            [248, 81,  73, 235],
+            [255, 166, 87, 255],
+          ],
+        }),
+
+        new ScatterplotLayer({
+          id: "buses",
+          data: lastBusRows,
+          getPosition:      (d) => d.position,
+          getRadius:        dotMeters,
+          radiusUnits:      "meters",
+          radiusMinPixels:  dotMinPx,
+          radiusMaxPixels:  dotMaxPx,
+          getFillColor:     [88, 220, 170, 200],  // single teal — 99% accessible anyway
+          getLineColor:     [255, 255, 255, 40],
+          stroked:          true,
+          lineWidthMinPixels: 0.4,
+          pickable:         false,
+        }),
+      ],
+    });
+  }
+
+  // Re-render on zoom so sizes update without re-fetching
+  map.on("zoom", () => renderLayers("h3_r6"));
+
+  async function loadAndRender(brtDate, brtSlot, resCol) {
+    const brtTimeStr = sliderToTime(brtSlot);
+    // Convert BRT slider → UTC date+hhmm for file paths
+    const { date: utcDate, hhmm: utcHhmm } = brtSlotToUtc(brtSlot, brtDate);
+    const heatmapUrl   = `${BUCKET_BASE_URL}/data/gold/${utcDate}/heatmap_${utcHhmm}.parquet`;
+    const positionsUrl = `${BUCKET_BASE_URL}/data/gold/${utcDate}/positions_${utcHhmm}.parquet`;
+
+    setStatus("loading", `Carregando ${brtDate} ${brtTimeStr} (BRT)…`);
+    document.getElementById("no-data").classList.remove("visible");
+
+    try {
+      const [heatmapResult, positionsResult] = await Promise.all([
+        conn.query(`
+          SELECT ${resCol} AS h3_id, latitude, longitude, contagem
+          FROM read_parquet('${heatmapUrl}')
+          WHERE ${resCol} IS NOT NULL
+        `),
+        conn.query(`
+          SELECT latitude, longitude
+          FROM read_parquet('${positionsUrl}')
+          WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+        `).catch(() => null),
+      ]);
+
+      lastHeatRows = heatmapResult.toArray().map((r) => ({
+        position: [r.longitude, r.latitude],
+        weight:   Number(r.contagem),
+      }));
+
+      lastBusRows = positionsResult
+        ? positionsResult.toArray().map((r) => ({ position: [r.longitude, r.latitude] }))
+        : [];
+
+      const displayCount = lastBusRows.length || lastHeatRows.length;
+      document.getElementById("hex-count").textContent = displayCount;
+
+      if (!lastHeatRows.length && !lastBusRows.length) {
+        document.getElementById("no-data").classList.add("visible");
+        overlay.setProps({ layers: [] });
+        setStatus("", `Sem dados — ${brtDate} ${brtTimeStr} (BRT)`);
+        return;
+      }
+
+      renderLayers(resCol);
+
+      const busCount = lastBusRows.length  ? `${lastBusRows.length} ônibus`  : "";
+      const hexCount = lastHeatRows.length ? `${lastHeatRows.length} hex`    : "";
+      const liveTag  = liveMode ? " · AO VIVO" : "";
+      setStatus("", `${[busCount, hexCount].filter(Boolean).join(" · ")} · ${brtDate} ${brtTimeStr}${liveTag}`);
+
+    } catch (err) {
+      console.warn("Erro ao carregar dados:", err.message);
+      document.getElementById("no-data").classList.add("visible");
+      document.getElementById("hex-count").textContent = "–";
+      overlay.setProps({ layers: [] });
+      setStatus("error", `Sem dados para ${brtDate} ${brtTimeStr} (BRT)`);
+    }
+  }
+
+  // ─── Live refresh loop ───────────────────────────────────────────
+  // Schedules itself recursively. Cleared on stopLive(), restarted on startLive().
+  async function doLiveRefresh() {
+    clearTimeout(refreshTimer);
+    if (!liveMode || !conn) return;
+
+    // The manifest is partitioned by UTC date. To find today's latest data,
+    // we need the current UTC date (not BRT date).
+    const utcDate = new Date().toISOString().slice(0, 10);
+    setStatus("loading", "Verificando manifest…");
+
+    try {
+      const result = await findLatestSlot(utcDate);
+      if (result !== null) {
+        const { brtSlot, brtDate } = result;
+        timeSlider.value = brtSlot;
+        updateSliderUI(brtSlot);
+        datePicker.value = brtDate;
+        await loadAndRender(brtDate, brtSlot, "h3_r6");
+      } else {
+        setStatus("error", "Manifest não encontrado — aguardando dados…");
+      }
+    } catch (e) {
+      console.error("[live]", e);
+      setStatus("error", "Erro na atualização automática");
+    }
+
+    if (liveMode) {
+      refreshTimer = setTimeout(doLiveRefresh, REFRESH_INTERVAL_MS);
+    }
+  }
+
+  function stopLive() {
+    liveMode = false;
+    clearTimeout(refreshTimer);
+    liveIcon.textContent = "play_arrow";
+    liveBtn.classList.remove("live-active");
+  }
+  function startLive() {
+    liveMode = true;
+    liveIcon.textContent = "stop";
+    liveBtn.classList.add("live-active");
+    datePicker.value = todayISO(); // BRT today
+    doLiveRefresh();
+  }
+
+  // ─── Controls ───────────────────────────────────────────────────
+  const datePicker   = document.getElementById("date-picker");
+  const timeSlider   = document.getElementById("time-slider");
+  const timeBubble   = document.getElementById("time-bubble");
+  const liveBtn      = document.getElementById("live-btn");
+  const liveIcon     = document.getElementById("live-icon");
+
+  // Update slider bubble position and fill track
+  function updateSliderUI(val) {
+    const pct = (val / 287) * 100;
+    const pctStr = pct.toFixed(2) + "%";
+    timeSlider.style.setProperty("--pct", pctStr);
+    timeBubble.style.left = pctStr;
+    timeBubble.textContent = sliderToTime(val);
+  }
+
+  datePicker.value = todayISO();
+  const initialBrtSlot = (() => { const d = nowBRT(); return Math.floor((d.hour * 60 + d.minute) / 5); })();
+  timeSlider.value = initialBrtSlot;
+  updateSliderUI(initialBrtSlot);
+
+  const triggerLoad = () => {
+    if (!conn) return;
+    loadAndRender(datePicker.value, +timeSlider.value, "h3_r6");
+  };
+
+  timeSlider.addEventListener("input", () => updateSliderUI(+timeSlider.value));
+  timeSlider.addEventListener("change", () => { stopLive(); triggerLoad(); });
+  datePicker.addEventListener("change", () => { stopLive(); triggerLoad(); });
+
+  liveBtn.addEventListener("click", () => {
+    if (liveMode) stopLive(); else startLive();
+  });
+
+  // ─── Init ────────────────────────────────────────────────────────
+  let mapReady = false;
+  let dbReady  = false;
+  const maybeLoad = () => {
+    if (mapReady && dbReady) {
+      map.resize();
+      startLive(); // begin in live mode — finds latest slot automatically
+    }
+  };
+
+  map.on("load", () => { mapReady = true; maybeLoad(); });
+
+  setStatus("loading", "Carregando DuckDB WASM…");
+  initDuckDB()
+    .then(() => { dbReady = true; setStatus("", "Pronto"); maybeLoad(); })
+    .catch((e) => {
+      setStatus("error", "Erro ao iniciar DuckDB");
+      console.error(e);
+    });
+})();
+</script>
+</body>
+</html>
