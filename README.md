@@ -37,7 +37,7 @@ Este projeto coleta automaticamente, a cada **5 minutos**, a posição em tempo 
 
 ## Dashboard em Tempo Real
 
-**URL do Dashboard**: [https://d23nm32hbofn5.cloudfront.net/](https://d23nm32hbofn5.cloudfront.net/)
+**URL do Dashboard**: [https://d23nm32hbofn5.cloudfront.net/static/index.html](https://d23nm32hbofn5.cloudfront.net/static/index.html)
 ![Heatmap Screenshot](/docs/heatmap_screenshot.png)
 
 ### Características do Dashboard:
